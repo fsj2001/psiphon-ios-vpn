@@ -97,9 +97,8 @@ static BOOL (^safeStringsEqual)(NSString *, NSString *) = ^BOOL(NSString *a, NSS
     BOOL isStartStopButtonHaloOn;
     
     // UI Constraint
-    NSLayoutConstraint *startButtonScreenWidth;
-    NSLayoutConstraint *startButtonScreenHeight;
     NSLayoutConstraint *startButtonWidth;
+    NSLayoutConstraint *startButtonHeight;
     NSLayoutConstraint *bottomBarTopConstraint;
     NSLayoutConstraint *subscriptionButtonTopConstraint;
     
@@ -364,24 +363,9 @@ static BOOL (^safeStringsEqual)(NSString *, NSString *) = ^BOOL(NSString *a, NSS
 
 // Reload when rotate
 - (void)viewWillTransitionToSize:(CGSize)size withTransitionCoordinator:(id<UIViewControllerTransitionCoordinator>)coordinator {
-    [self.view removeConstraint:startButtonWidth];
-    
-    if (size.width > size.height) {
-        [self.view removeConstraint:startButtonScreenWidth];
-        [self.view addConstraint:startButtonScreenHeight];
-        if ([[UIDevice currentDevice].model hasPrefix:@"iPhone"]) {
-            adLabel.hidden = YES;
-        }
-    } else {
-        [self.view removeConstraint:startButtonScreenHeight];
-        [self.view addConstraint:startButtonScreenWidth];
-        if ([[UIDevice currentDevice].model hasPrefix:@"iPhone"]) {
-            adLabel.hidden = ![self.adManager untunneledInterstitialIsReady];
-        }
-    }
-    
-    [self.view addConstraint:startButtonWidth];
-    
+
+    [self setStartButtonSizeConstraints:size];
+
     [coordinator animateAlongsideTransition:^(id<UIViewControllerTransitionCoordinatorContext> context) {
         if (isStartStopButtonHaloOn && startStopButtonHalo) {
             startStopButtonHalo.hidden = YES;
@@ -472,17 +456,18 @@ static BOOL (^safeStringsEqual)(NSString *, NSString *) = ^BOOL(NSString *a, NSS
                   // Alert the user that Connect On Demand is enabled, and if they
                   // would like Connect On Demand to be disabled, and the extension to be stopped.
                   NSString *alertTitle = NSLocalizedStringWithDefaultValue(@"CONNECT_ON_DEMAND_ALERT_TITLE", nil, [NSBundle mainBundle], @"Auto-start VPN is enabled", @"Alert dialog title informing user that 'Auto-start VPN' feature is enabled");
-                  NSString *alertMessage = NSLocalizedStringWithDefaultValue(@"CONNECT_ON_DEMAND_ALERT_BODY", nil, [NSBundle mainBundle], @"Cannot stop the VPN while \"Auto-start VPN\" is enabled.\nWould you like to disable \"Auto-start VPN\" on demand and stop the VPN?", "Alert dialog body informing the user that the 'Auto-start VPN on demand' feature is enabled and that the VPN cannot be stopped. Followed by asking the user if they would like to disable the 'Auto-start VPN on demand' feature, and stop the VPN.");
+                  NSString *alertMessage = NSLocalizedStringWithDefaultValue(@"CONNECT_ON_DEMAND_ALERT_BODY", nil, [NSBundle mainBundle], @"\"Auto-start VPN\" will be temporarily disabled until the next time Psiphon VPN is started.", "Alert dialog body informing the user that the 'Auto-start VPN on demand' feature will be disabled and that the VPN cannot be stopped.");
 
                   UIAlertController *alert = [UIAlertController
                                               alertControllerWithTitle:alertTitle message:alertMessage preferredStyle:UIAlertControllerStyleAlert];
 
-                  UIAlertAction *disableAction = [UIAlertAction
-                    actionWithTitle:NSLocalizedStringWithDefaultValue(@"DISABLE_BUTTON", nil, [NSBundle mainBundle], @"Disable Auto-start VPN and Stop", @"Disable Auto-start VPN feature and Stop the VPN button label")
-                    style:UIAlertActionStyleDestructive
+                  UIAlertAction *stopUntilNextStartAction = [UIAlertAction
+                    actionWithTitle:NSLocalizedStringWithDefaultValue(@"OK_BUTTON", nil, [NSBundle mainBundle], @"OK", @"OK button title")
+                    style:UIAlertActionStyleDefault
                     handler:^(UIAlertAction *action) {
+
                         // Disable "Connect On Demand" and stop the VPN.
-                        [[NSUserDefaults standardUserDefaults] setBool:FALSE forKey:SettingsConnectOnDemandBoolKey];
+                        [[NSUserDefaults standardUserDefaults] setBool:TRUE forKey:VPNManagerConnectOnDemandUntilNextStartBoolKey];
 
                         __block RACDisposable *disposable = [[weakSelf.vpnManager setConnectOnDemandEnabled:FALSE]
                           subscribeNext:^(NSNumber *x) {
@@ -497,17 +482,8 @@ static BOOL (^safeStringsEqual)(NSString *, NSString *) = ^BOOL(NSString *a, NSS
                         [weakSelf.compoundDisposable addDisposable:disposable];
                     }];
 
-                  UIAlertAction *cancelAction = [UIAlertAction
-                                                 actionWithTitle:NSLocalizedStringWithDefaultValue(@"CANCEL_BUTTON", nil, [NSBundle mainBundle], @"Cancel", @"Alert Cancel button")
-                                                 style:UIAlertActionStyleCancel
-                                                 handler:^(UIAlertAction *action) {
-                                                     // Do nothing
-                                                 }];
-
-                  [alert addAction:disableAction];
-                  [alert addAction:cancelAction];
+                  [alert addAction:stopUntilNextStartAction];
                   [self presentViewController:alert animated:TRUE completion:nil];
-
               }
 
               [self removePulsingHaloLayer];
@@ -752,19 +728,29 @@ static BOOL (^safeStringsEqual)(NSString *, NSString *) = ^BOOL(NSString *a, NSS
     
     // Setup autolayout
     [startStopButton.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor].active = YES;
-    startButtonScreenHeight = [startStopButton.heightAnchor constraintEqualToAnchor:self.view.heightAnchor multiplier:.4f];
-    startButtonScreenWidth = [startStopButton.widthAnchor constraintEqualToAnchor:self.view.widthAnchor multiplier:.4f];
-    startButtonWidth = [startStopButton.heightAnchor constraintEqualToAnchor:startStopButton.widthAnchor];
-    
-    CGSize viewSize = self.view.bounds.size;
-    
-    if (viewSize.width > viewSize.height) {
-        [self.view addConstraint:startButtonScreenHeight];
-    } else {
-        [self.view addConstraint:startButtonScreenWidth];
+
+    [self setStartButtonSizeConstraints:self.view.bounds.size];
+}
+
+- (void)setStartButtonSizeConstraints:(CGSize)size {
+    if (startButtonWidth) {
+        startButtonWidth.active = NO;
     }
-    
-    [self.view addConstraint:startButtonWidth];
+
+    if (startButtonHeight) {
+        startButtonHeight.active = NO;
+    }
+
+    if (size.width > size.height) {
+        startButtonHeight = [startStopButton.heightAnchor constraintEqualToAnchor:self.view.heightAnchor multiplier:.4f];
+        startButtonWidth = [startStopButton.widthAnchor constraintEqualToAnchor:startStopButton.heightAnchor];
+    } else {
+        startButtonWidth = [startStopButton.widthAnchor constraintEqualToAnchor:self.view.widthAnchor multiplier:.4f];
+        startButtonHeight = [startStopButton.heightAnchor constraintEqualToAnchor:startStopButton.widthAnchor];
+    }
+
+    startButtonWidth.active = YES;
+    startButtonHeight.active = YES;
 }
 
 - (void)addAdLabel {
@@ -1305,15 +1291,9 @@ static BOOL (^safeStringsEqual)(NSString *, NSString *) = ^BOOL(NSString *a, NSS
 
 - (void)selectedRegionDisappearedThenSwitchedToBestPerformance {
     dispatch_async_main(^{
-        // Alert the user that the VPN failed to start, and that they should try again.
-        [UIAlertController presentSimpleAlertWithTitle:NSLocalizedStringWithDefaultValue(@"VPN_START_FAIL_REGION_INVALID_TITLE", nil, [NSBundle mainBundle], @"Server Region Unavailable", @"Alert dialog title indicating to the user that Psiphon was unable to start because they selected an egress region that is no longer available")
-                                               message:NSLocalizedStringWithDefaultValue(@"VPN_START_FAIL_REGION_INVALID_MESSAGE_1", nil, [NSBundle mainBundle], @"The region you selected is no longer available. You must choose a new region or change to the default \"Fastest Country\" choice.", @"Alert dialog message informing the user that an error occurred while starting Psiphon because they selected an egress region that is no longer available (Do not translate 'Psiphon'). The user should select a different region and try again. Note: the backslash before each quotation mark should be left as is for formatting.")
-                                        preferredStyle:UIAlertControllerStyleAlert
-                                             okHandler:nil];
         [self updateRegionButton];
     });
     [self persistSelectedRegion];
-    [self.vpnManager stopVPN];
 }
 
 @end
